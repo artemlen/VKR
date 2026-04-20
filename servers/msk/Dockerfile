@@ -1,7 +1,18 @@
 FROM alpine:3.18
 
-RUN apk add --no-cache curl bash wget python3
+# Устанавливаем все зависимости включая stress-ng
+RUN apk update && apk add --no-cache \
+    curl \
+    bash \
+    wget \
+    python3 \
+    stress-ng \
+    procps
 
+# Проверяем что stress-ng установился
+RUN stress-ng --version
+
+# Скачиваем node_exporter
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
         NE_ARCH="arm64"; \
@@ -14,9 +25,10 @@ RUN ARCH=$(uname -m) && \
     mv /tmp/node_exporter-1.6.1.linux-${NE_ARCH}/node_exporter /usr/local/bin/ && \
     rm -rf /tmp/node_exporter*
 
+# Копируем агент
 COPY stress_agent.py /app/stress_agent.py
 
-# Скрипт запуска обоих процессов
+# Скрипт запуска
 RUN printf '#!/bin/sh\n\
 python3 /app/stress_agent.py &\n\
 exec /usr/local/bin/node_exporter \\\n\

@@ -1,121 +1,160 @@
 """
-Stress Agent — запускается внутри контейнера сервера.
-Принимает команды по HTTP и запускает реальную нагрузку.
+Stress Agent — использует stress-ng для реальной нагрузки на контейнер.
 """
-import threading
-import time
-import math
+import subprocess
 import os
+import signal
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 
-stop_events = []
-active_threads = []
-lock = threading.Lock()
-status = {"active": False, "type": None, "intensity": 0}
+# Текущий процесс stress-ng
+current_process = None
+process_lock = threading.Lock()
+current_status = {"active": False, "type": None, "intensity": 0}
 
 
-def cpu_worker(stop_event, intensity):
-    cycle = 0.1
-    work_time = cycle * (intensity / 100.0)
-    sleep_time = cycle * (1 - intensity / 100.0)
-    while not stop_event.is_set():
-        start = time.perf_counter()
-        while time.perf_counter() - start < work_time:
-            _ = math.sqrt(sum(i * i for i in range(1000)))
-        time.sleep(max(sleep_time, 0.001))
+def stop_stress():
+    """Останавливает текущую нагрузку."""
+    global current_process, current_status
+    with process_lock:
+        if current_process is not None:
+            try:
+                # Убиваем процесс и все дочерние
+                os.killpg(os.getpgid(current_process.pid), signal.SIGTERM)
+            except Exception as e:
+                print(f"Ошибка при остановке: {e}")
+                try:
+                    current_process.kill()
+                except Exception:
+                    pass
+            current_process = None
+        current_status = {"active": False, "type": None, "intensity": 0}
 
 
-def memory_worker(stop_event, intensity):
-    mb = int(64 + (intensity / 100.0) * 448)
-    chunk = bytearray(mb * 1024 * 1024)
-    idx = 0
-    while not stop_event.is_set():
-        chunk[idx % len(chunk)] = idx % 256
-        idx += 1
-        if idx % 100000 == 0:
-            time.sleep(0.01)
-    del chunk
+def start_stress(load_type: str, intensity: int, duration: int):
+    """Запускает stress-ng с заданными параметрами."""
+    global current_process, current_status
 
+    # Сначала останавливаем предыдущую нагрузку
+    stop_stress()
 
-def stop_all():
-    global stop_events, active_threads
-    with lock:
-        for e in stop_events:
-            e.set()
-        stop_events = []
-        active_threads = []
-        status["active"] = False
-        status["type"] = None
-        status["intensity"] = 0
+    num_cpus = os.cpu_count() or 1
 
+    # Формируем команду stress-ng
+    cmd = ["stress-ng"]
 
-def start_load(load_type, intensity, duration):
-    stop_all()
-    time.sleep(0.2)
+    if load_type == "cpu":
+        cmd += [
+            "--cpu", str(num_cpus),
+            "--cpu-load", str(intensity),
+        ]
+    elif load_type == "memory":
+        # Выделяем память пропорционально интенсивности
+        mem_mb = int(64 + (intensity / 100.0) * 256)
+        cmd += [
+            "--vm", "1",
+            "--vm-bytes", f"{mem_mb}M",
+            "--vm-keep",
+        ]
+    elif load_type == "mixed":
+        mem_mb = int(64 + (intensity / 100.0) * 128)
+        cmd += [
+            "--cpu", str(num_cpus),
+            "--cpu-load", str(intensity // 2),
+            "--vm", "1",
+            "--vm-bytes", f"{mem_mb}M",
+            "--vm-keep",
+        ]
 
-    new_stop_events = []
-    threads = []
+    # Длительность
+    if duration > 0:
+        cmd += ["--timeout", str(duration)]
 
-    if load_type in ("cpu", "mixed"):
-        cpu_int = intensity if load_type == "cpu" else intensity // 2
-        num_cores = max(1, os.cpu_count() or 1)
-        for _ in range(num_cores):
-            e = threading.Event()
-            t = threading.Thread(target=cpu_worker, args=(e, cpu_int), daemon=True)
-            t.start()
-            new_stop_events.append(e)
-            threads.append(t)
+    cmd += ["--metrics-brief"]
 
-    if load_type in ("memory", "mixed"):
-        mem_int = intensity if load_type == "memory" else intensity // 2
-        e = threading.Event()
-        t = threading.Thread(target=memory_worker, args=(e, mem_int), daemon=True)
-        t.start()
-        new_stop_events.append(e)
-        threads.append(t)
+    print(f"Запуск команды: {' '.join(cmd)}")
 
-    with lock:
-        stop_events.extend(new_stop_events)
-        active_threads.extend(threads)
-        status["active"] = True
-        status["type"] = load_type
-        status["intensity"] = intensity
+    with process_lock:
+        try:
+            current_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=os.setsid,  # создаём новую группу процессов
+            )
+            current_status = {
+                "active": True,
+                "type": load_type,
+                "intensity": intensity,
+                "duration": duration,
+                "pid": current_process.pid,
+            }
+            print(f"stress-ng запущен PID={current_process.pid}")
+        except Exception as e:
+            print(f"Ошибка запуска stress-ng: {e}")
+            current_status = {"active": False, "type": None, "intensity": 0}
+            return
 
+    # Автостоп через duration секунд
     if duration > 0:
         def auto_stop():
-            time.sleep(duration)
-            stop_all()
+            import time
+            time.sleep(duration + 2)
+            with process_lock:
+                global current_process
+                if current_process is not None:
+                    try:
+                        poll = current_process.poll()
+                        if poll is None:
+                            stop_stress()
+                    except Exception:
+                        pass
+            current_status["active"] = False
         threading.Thread(target=auto_stop, daemon=True).start()
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass  # подавляем лишние логи
+        pass  # подавляем HTTP логи
 
     def do_POST(self):
         length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(length)
+
         try:
             data = json.loads(body)
         except Exception:
             self.send_response(400)
             self.end_headers()
+            self.wfile.write(b'{"error": "invalid json"}')
             return
 
         if self.path == "/start":
-            start_load(
-                data.get("load_type", "cpu"),
-                data.get("intensity", 50),
-                data.get("duration", 60),
-            )
+            load_type = data.get("load_type", "cpu")
+            intensity = int(data.get("intensity", 50))
+            duration = int(data.get("duration", 60))
+
+            # Запускаем в отдельном потоке чтобы не блокировать HTTP
+            threading.Thread(
+                target=start_stress,
+                args=(load_type, intensity, duration),
+                daemon=True,
+            ).start()
+
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "started"}).encode())
+            self.wfile.write(json.dumps({
+                "status": "started",
+                "load_type": load_type,
+                "intensity": intensity,
+                "duration": duration,
+            }).encode())
 
         elif self.path == "/stop":
-            stop_all()
+            threading.Thread(target=stop_stress, daemon=True).start()
+
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -130,13 +169,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            with lock:
-                self.wfile.write(json.dumps(status).encode())
+            with process_lock:
+                # Проверяем реальный статус процесса
+                if current_process is not None:
+                    poll = current_process.poll()
+                    if poll is not None:
+                        # Процесс завершился
+                        current_status["active"] = False
+                self.wfile.write(json.dumps(current_status).encode())
+
         elif self.path == "/health":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"status": "ok"}).encode())
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -144,6 +191,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("AGENT_PORT", 9200))
-    server = HTTPServer(("0.0.0.0", port), Handler)
     print(f"Stress Agent запущен на порту {port}")
+    print(f"CPUs доступно: {os.cpu_count()}")
+    server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()

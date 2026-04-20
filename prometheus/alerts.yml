@@ -1,14 +1,14 @@
 groups:
   - name: bank.infrastructure.critical
-    interval: 30s
+    interval: 5s
     rules:
 
       # ── CPU ──────────────────────────────────────────────────────
       - alert: HighCPUUsage
         expr: |
           100 - (avg by(instance, location, datacenter)
-            (rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 80
-        for: 1m
+            (rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 60
+        for: 10s
         labels:
           severity: critical
           category: cpu
@@ -24,8 +24,8 @@ groups:
       - alert: CriticalCPUUsage
         expr: |
           100 - (avg by(instance, location, datacenter)
-            (rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 95
-        for: 30s
+            (rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 80
+        for: 5s
         labels:
           severity: critical
           category: cpu
@@ -71,18 +71,18 @@ groups:
             использует {{ printf "%.1f" $value }}% RAM.
 
       # ── Load Average ─────────────────────────────────────────────
-      - alert: HighLoadAverage
-        expr: node_load1 > 2
-        for: 2m
-        labels:
-          severity: warning
-          category: load
-          team: infrastructure
-        annotations:
-          summary: "Высокий Load Average на {{ $labels.instance }}"
-          description: >
-            Load Average (1m) на {{ $labels.instance }}: {{ printf "%.2f" $value }}.
-            Порог: 2.0.
+      #- alert: HighLoadAverage
+      #  expr: node_load1 > 2
+      #  for: 2m
+      #  labels:
+      #    severity: warning
+      #    category: load
+      #    team: infrastructure
+      #  annotations:
+      #    summary: "Высокий Load Average на {{ $labels.instance }}"
+      #    description: >
+      #      Load Average (1m) на {{ $labels.instance }}: {{ printf "%.2f" $value }}.
+      #      Порог: 2.0.
 
       # ── Disk ─────────────────────────────────────────────────────
       - alert: DiskSpaceWarning
@@ -122,7 +122,7 @@ groups:
       - alert: CPUUsageWarning
         expr: |
           100 - (avg by(instance, location, datacenter)
-            (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 60
+            (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 40
         for: 3m
         labels:
           severity: warning
