@@ -2,21 +2,17 @@ global:
   resolve_timeout: 5m
 
 route:
+  receiver: "middleware"
   group_by: ["alertname", "instance", "severity"]
   group_wait: 10s
   group_interval: 30s
   repeat_interval: 5m
-  receiver: "middleware"
-
   routes:
-    # P1 - критические алерты идут сразу
     - match:
-        priority: P1
+        severity: critical
       receiver: "middleware"
       group_wait: 5s
       repeat_interval: 2m
-
-    # warning - с небольшой задержкой
     - match:
         severity: warning
       receiver: "middleware"
@@ -28,20 +24,18 @@ receivers:
     webhook_configs:
       - url: "http://middleware:8081/webhook"
         send_resolved: true
-        http_config:
-          timeout: 10s
 
 inhibit_rules:
-  # Если нода упала - подавляем остальные алерты с этой ноды
   - source_match:
       alertname: NodeDown
     target_match_re:
       alertname: "HighCPUUsage|CriticalCPUUsage|HighMemoryUsage|CriticalMemoryUsage"
-    equal: ["instance"]
-
-  # Critical подавляет warning того же типа
+    equal:
+      - instance
   - source_match:
       severity: critical
     target_match:
       severity: warning
-    equal: ["alertname", "instance"]
+    equal:
+      - alertname
+      - instance

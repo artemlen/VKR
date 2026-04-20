@@ -12,6 +12,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +21,14 @@ logging.basicConfig(
 log = logging.getLogger("load-generator")
 
 app = FastAPI(title="Load Generator")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Адреса агентов внутри docker-сети
 AGENTS = {
