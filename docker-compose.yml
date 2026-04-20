@@ -1,0 +1,156 @@
+version: "3.8"
+
+networks:
+  bank-network:
+    driver: bridge
+
+volumes:
+  prometheus_data: {}
+  grafana_data: {}
+  gotify_data: {}
+
+services:
+
+  # ─── Серверы-симуляторы ───────────────────────────────────────
+
+  server-msk:
+    build:
+      context: ./servers/msk
+    container_name: server-msk
+    hostname: server-msk
+    networks:
+      - bank-network
+    ports:
+      - "9101:9100"
+      - "9201:9200"   # stress agent msk
+    restart: unless-stopped
+    labels:
+      - "location=moscow"
+      - "role=primary"
+
+  server-spb:
+    build:
+      context: ./servers/spb
+    container_name: server-spb
+    hostname: server-spb
+    networks:
+      - bank-network
+    ports:
+      - "9102:9100"
+      - "9202:9200"   # stress agent spb
+    restart: unless-stopped
+    labels:
+      - "location=saint-petersburg"
+      - "role=secondary"
+
+  # ─── Prometheus ───────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: prometheus
+    networks:
+      - bank-network
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
+    restart: unless-stopped
+    depends_on:
+      - server-msk
+      - server-spb
+
+  # ─── AlertManager ─────────────────────────────────────────────
+
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: alertmanager
+    networks:
+      - bank-network
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager:/etc/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    restart: unless-stopped
+
+  # ─── Grafana ──────────────────────────────────────────────────
+
+  grafana:
+    image: grafana/grafana:10.0.3
+    container_name: grafana
+    networks:
+      - bank-network
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ALERTING_ENABLED=false
+      - GF_UNIFIED_ALERTING_ENABLED=false
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # ─── Gotify ───────────────────────────────────────────────────
+
+  gotify:
+    image: gotify/server:2.4.0
+    container_name: gotify
+    networks:
+      - bank-network
+    ports:
+      - "8080:80"
+    volumes:
+      - gotify_data:/app/data
+    environment:
+      - GOTIFY_DEFAULTUSER_NAME=admin
+      - GOTIFY_DEFAULTUSER_PASS=admin123
+    restart: unless-stopped
+
+  # ─── Middleware ───────────────────────────────────────────────
+
+  middleware:
+    build:
+      context: ./middleware
+    container_name: middleware
+    networks:
+      - bank-network
+    ports:
+      - "8081:8081"
+    environment:
+      - GOTIFY_URL=http://gotify:80
+      - GOTIFY_TOKEN=${GOTIFY_TOKEN}   # заменится после первого запуска
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    depends_on:
+      - gotify
+
+  # ─── Load Generator ───────────────────────────────────────────
+
+  load-generator:
+    build:
+      context: ./load-generator
+    container_name: load-generator
+    networks:
+      - bank-network
+    ports:
+      - "8082:8082"
+    restart: unless-stopped
+    depends_on:
+      - server-msk
+      - server-spb
