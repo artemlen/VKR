@@ -1,0 +1,20 @@
+groups:
+  - name: bank_server_alerts
+    rules:
+      - alert: HighCPULoad
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 50
+        for: 1m # Сработает, если CPU больше 50% целую минуту
+        labels:
+          severity: critical
+        annotations:
+          summary: "Высокая нагрузка на CPU (сервер СПб)"
+          description: "Загрузка CPU составляет {{ $value }}%."
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 60
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокое потребление RAM (сервер СПб)"
+          description: "Использовано {{ $value }}% оперативной памяти."

@@ -1,45 +1,17 @@
 global:
-  scrape_interval: 5s
-  evaluation_interval: 5s
-  external_labels:
-    monitor: "bank-monitoring"
-    environment: "production"
+  scrape_interval: 5s # Чаще опрашиваем для демонстрации
+  evaluation_interval: 5s # Чаще проверяем правила
+
+rule_files:
+  - 'alert_rules.yml'
 
 alerting:
   alertmanagers:
     - static_configs:
         - targets:
-            - alertmanager:9093
-
-rule_files:
-  - "alerts.yml"
+          - alertmanager:9093
 
 scrape_configs:
-
-  - job_name: "prometheus"
+  - job_name: 'spb_server'
     static_configs:
-      - targets: ["localhost:9090"]
-
-  - job_name: "server-msk"
-    static_configs:
-      - targets: ["server-msk:9100"]
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: instance
-        replacement: "server-msk"
-      - target_label: location
-        replacement: "moscow"
-      - target_label: datacenter
-        replacement: "MSK-DC1"
-
-  - job_name: "server-spb"
-    static_configs:
-      - targets: ["server-spb:9100"]
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: instance
-        replacement: "server-spb"
-      - target_label: location
-        replacement: "saint-petersburg"
-      - target_label: datacenter
-        replacement: "SPB-DC1"
+      - targets: ['spb:9100'] # Обращаемся по имени контейнера

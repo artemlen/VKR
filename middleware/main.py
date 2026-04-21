@@ -1,260 +1,100 @@
-"""
-Middleware сервис — принимает вебхуки от AlertManager,
-фильтрует через filter_rules и отправляет в Gotify.
-"""
-
-from __future__ import annotations
-
-import os
-import logging
-from datetime import datetime, timezone
-from typing import Any, Optional
-
-import httpx
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
+import requests
+import os
 
-from filter_rules import AlertContext, evaluate_alert, state_store
+app = FastAPI(title="Bank Smart Alert Middleware")
 
-# ─── Настройка ────────────────────────────────────────────────────────────────
+# Читаем токен из переменных окружения
+GOTIFY_URL = "http://gotify:8080/message"
+GOTIFY_TOKEN = os.getenv("GOTIFY_TOKEN")
 
-GOTIFY_URL = os.getenv("GOTIFY_URL", "http://gotify:80")
-GOTIFY_TOKEN = os.getenv("GOTIFY_TOKEN", "")
+class AlertData(BaseModel):
+    status: str
+    labels: dict
+    annotations: dict
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-)
-log = logging.getLogger("middleware")
-
-app = FastAPI(
-    title="Bank Alert Middleware",
-    description="Интеллектуальный фильтр алертов для банковской инфраструктуры",
-    version="1.0.0",
-)
-
-# История обработанных алертов (для UI)
-processed_alerts: list[dict] = []
-
-# ─── Модели ───────────────────────────────────────────────────────────────────
-
-class GotifyMessage(BaseModel):
-    title: str
-    message: str
-    priority: int = 5
-
-
-# ─── Готовый клиент Gotify ────────────────────────────────────────────────────
-
-async def send_to_gotify(title: str, message: str, priority: int = 5) -> bool:
-    """Отправляет сообщение в Gotify."""
-    token = GOTIFY_TOKEN or os.getenv("GOTIFY_TOKEN", "")
-    if not token:
-        log.warning("GOTIFY_TOKEN не установлен — пропускаем отправку")
-        return False
-
-    url = f"{GOTIFY_URL}/message"
-    payload = {"title": title, "message": message, "priority": priority}
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                url,
-                json=payload,
-                headers={"X-Gotify-Key": token},
-            )
-            resp.raise_for_status()
-            log.info(f"Gotify: сообщение доставлено — '{title}'")
-            return True
-    except httpx.HTTPStatusError as e:
-        log.error(f"Gotify HTTP ошибка {e.response.status_code}: {e.response.text}")
-        return False
-    except Exception as e:
-        log.error(f"Gotify недоступен: {e}")
-        return False
-
-
-# ─── Эндпоинты ───────────────────────────────────────────────────────────────
-
-@app.post("/webhook")
-async def receive_webhook(request: Request):
+def is_noise(alert: AlertData) -> bool:
     """
-    Принимает вебхук от AlertManager.
-    Каждый алерт проходит через фильтр и при необходимости отправляется в Gotify.
+    ТВОЯ ФИШКА ДЛЯ ВКР ЗДЕСЬ.
+    Сейчас реализована базовая логика: пропускаем Critical, фильтруем Warning (как шум),
+    если они не содержат ключевых слов.
+    Ты можешь внедрить сюда ML, тайм-ауты, анализ истории и т.д.
     """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Невалидный JSON")
+    severity = alert.labels.get("severity", "")
+    alert_name = alert.labels.get("alertname", "")
+    description = alert.annotations.get("description", "")
 
-    log.info(f"Получен вебхук: status={body.get('status')}, "
-             f"alerts={len(body.get('alerts', []))}")
+    # Пример 1: Фильтруем конкретные алерты, которые мы считаем информационным шумом
+    if alert_name == "SomeBoringAlert":
+        print(f"[MIDDLEWARE] Отфильтрован шум: {alert_name}")
+        return True
 
-    results = []
+    # Пример 2: Пропускаем всё, что критично
+    if severity == "critical":
+        return False
 
-    for raw_alert in body.get("alerts", []):
-        labels = raw_alert.get("labels", {})
-        annotations = raw_alert.get("annotations", {})
-        status = raw_alert.get("status", "firing")
-        is_resolved = status == "resolved"
+    # Пример 3: Warning пропускаем только если есть слово RAM (иначе это шум)
+    if severity == "warning" and "RAM" in description:
+        return False
 
-        # Извлекаем числовое значение из описания (если есть)
-        value = _extract_value(annotations.get("description", ""))
+    # Остальное считаем шумом
+    print(f"[MIDDLEWARE] Отфильтрован как шум: {alert_name} (Severity: {severity})")
+    return True
 
-        ctx = AlertContext(
-            alertname=labels.get("alertname", "Unknown"),
-            instance=labels.get("instance", "unknown"),
-            severity=labels.get("severity", "info"),
-            category=labels.get("category", "general"),
-            value=value,
-            fired_at=_parse_time(raw_alert.get("startsAt")),
-            labels=labels,
-            annotations=annotations,
+@app.post("/alert")
+async def handle_alert(request: Request):
+    if not GOTIFY_TOKEN or GOTIFY_TOKEN == "YOUR_TOKEN_HERE":
+        raise HTTPException(status_code=500, detail="Gotify token is not configured in .env")
+
+    body = await request.json()
+    
+    # Alertmanager присылает список алертов
+    alerts = body.get("alerts", [])
+    processed_count = 0
+    filtered_count = 0
+
+    for alert_data in alerts:
+        alert = AlertData(
+            status=alert_data.get("status"),
+            labels=alert_data.get("labels", {}),
+            annotations=alert_data.get("annotations", {})
         )
 
-        # ── Фильтрация ──────────────────────────────────────────────
-        result = evaluate_alert(ctx, is_resolved=is_resolved)
+        if is_noise(alert):
+            filtered_count += 1
+            continue
 
-        log_entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "alertname": ctx.alertname,
-            "instance": ctx.instance,
-            "severity": ctx.severity,
-            "status": status,
-            "delivered": result.should_deliver,
-            "reason": result.reason,
-        }
-
-        if result.should_deliver:
-            title = result.modified_title or ctx.annotations.get("summary", ctx.alertname)
-            message = result.modified_message or annotations.get("description", "")
-            priority = result.priority
-
-            delivered = await send_to_gotify(title, message, priority)
-            log_entry["gotify_delivered"] = delivered
-
-            log.info(
-                f"[ДОСТАВЛЕНО] {ctx.alertname} @ {ctx.instance} "
-                f"(severity={ctx.severity}, priority={priority})"
-            )
+        # Формируем сообщение для Gotify
+        if alert.status == "resolved":
+            # Если проблема УСТРАНЕНА, меняем текст на логичный
+            title = f"🟢 РЕШЕНО: {alert.annotations.get('summary', 'Алерт')}"
+            #message = f"Восстановлена нормальная работа. Последнее значение: {alert.annotations.get('description', '')}"
+            message = "Метрики вернулись в норму. Нагрузка снизилась ниже допустимого порога."
+            priority = 2 # Понижаем приоритет, чтобы не пиликало
         else:
-            log_entry["gotify_delivered"] = False
-            log.info(
-                f"[ОТФИЛЬТРОВАНО] {ctx.alertname} @ {ctx.instance} "
-                f"— {result.reason}"
-            )
+            # Если проблема ЕСТЬ, шлем стандартный текст
+            status_emoji = "🔴"
+            title = f"{status_emoji} Банк: {alert.annotations.get('summary', 'Алерт')}"
+            message = alert.annotations.get('description', 'Нет описания')
+            priority = 8 if alert.labels.get("severity") == "critical" else 5
 
-        processed_alerts.append(log_entry)
-        # Ограничиваем историю
-        if len(processed_alerts) > 500:
-            processed_alerts.pop(0)
-
-        results.append(log_entry)
-
-    return JSONResponse(content={"processed": len(results), "results": results})
-
-
-@app.post("/send")
-async def manual_send(msg: GotifyMessage):
-    """Ручная отправка уведомления в Gotify (для тестирования)."""
-    ok = await send_to_gotify(msg.title, msg.message, msg.priority)
-    if ok:
-        return {"status": "delivered"}
-    raise HTTPException(status_code=502, detail="Не удалось доставить в Gotify")
-
-
-@app.get("/history")
-async def get_history(limit: int = 50):
-    """История обработанных алертов."""
-    return {
-        "total": len(processed_alerts),
-        "alerts": processed_alerts[-limit:][::-1],
-    }
-
-
-@app.get("/stats")
-async def get_stats():
-    """Статистика фильтрации."""
-    total = len(processed_alerts)
-    delivered = sum(1 for a in processed_alerts if a.get("delivered"))
-    filtered = total - delivered
-
-    by_severity: dict[str, int] = {}
-    by_instance: dict[str, int] = {}
-
-    for a in processed_alerts:
-        sev = a.get("severity", "unknown")
-        inst = a.get("instance", "unknown")
-        by_severity[sev] = by_severity.get(sev, 0) + 1
-        by_instance[inst] = by_instance.get(inst, 0) + 1
-
-    return {
-        "total_processed": total,
-        "delivered": delivered,
-        "filtered_out": filtered,
-        "delivery_rate": f"{(delivered / total * 100):.1f}%" if total > 0 else "0%",
-        "by_severity": by_severity,
-        "by_instance": by_instance,
-    }
-
-
-@app.get("/health")
-async def health():
-    """Проверка состояния middleware."""
-    gotify_ok = await _check_gotify()
-    return {
-        "status": "ok",
-        "gotify_reachable": gotify_ok,
-        "gotify_token_set": bool(GOTIFY_TOKEN),
-        "processed_total": len(processed_alerts),
-    }
-
-
-@app.get("/")
-async def root():
-    return {
-        "service": "Bank Alert Middleware",
-        "version": "1.0.0",
-        "endpoints": {
-            "webhook": "POST /webhook — приём алертов от AlertManager",
-            "send": "POST /send — ручная отправка в Gotify",
-            "history": "GET /history — история алертов",
-            "stats": "GET /stats — статистика фильтрации",
-            "health": "GET /health — состояние сервиса",
-            "docs": "GET /docs — Swagger UI",
-        },
-    }
-
-
-# ─── Вспомогательные функции ─────────────────────────────────────────────────
-
-def _parse_time(ts: Optional[str]) -> datetime:
-    if not ts:
-        return datetime.now(timezone.utc)
-    try:
-        from dateutil import parser as dtparser
-        return dtparser.parse(ts)
-    except Exception:
-        return datetime.now(timezone.utc)
-
-
-def _extract_value(description: str) -> Optional[float]:
-    """Пытается извлечь числовое значение из описания алерта."""
-    import re
-    matches = re.findall(r"(\d+(?:\.\d+)?)\s*%", description)
-    if matches:
+        # Отправляем в Gotify
         try:
-            return float(matches[0])
-        except ValueError:
-            pass
-    return None
+            resp = requests.post(
+                f"{GOTIFY_URL}?token={GOTIFY_TOKEN}",
+                json={
+                    "title": title,
+                    "message": message,
+                    "priority": priority
+                }
+            )
+            if resp.status_code == 200:
+                processed_count += 1
+                print(f"[MIDDLEWARE] Доставлено: {title}")
+            else:
+                print(f"[MIDDLEWARE] Ошибка Gotify: {resp.text}")
+        except Exception as e:
+            print(f"[MIDDLEWARE] Ошибка соединения с Gotify: {e}")
 
-
-async def _check_gotify() -> bool:
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(f"{GOTIFY_URL}/health")
-            return resp.status_code == 200
-    except Exception:
-        return False
+    return {"status": "ok", "delivered": processed_count, "filtered_as_noise": filtered_count}

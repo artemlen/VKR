@@ -1,41 +1,15 @@
 global:
-  resolve_timeout: 2m
+  resolve_timeout: 1m
 
 route:
-  receiver: "middleware"
-  group_by: ["alertname", "instance", "severity"]
-  group_wait: 2s
-  group_interval: 10s
-  repeat_interval: 2m
-  routes:
-    - match:
-        severity: critical
-      receiver: "middleware"
-      group_wait: 1s
-      repeat_interval: 1m
-    - match:
-        severity: warning
-      receiver: "middleware"
-      group_wait: 5s
-      repeat_interval: 3m
+  group_by: ['alertname']
+  group_wait: 5s # Ждем 5 секунд перед отправкой группы
+  group_interval: 5s
+  repeat_interval: 1m # Если проблема не решена, повторяем через 1 мин
+  receiver: 'smart-middleware'
 
 receivers:
-  - name: "middleware"
+  - name: 'smart-middleware'
     webhook_configs:
-      - url: "http://middleware:8081/webhook"
-        send_resolved: true
-
-inhibit_rules:
-  - source_match:
-      alertname: NodeDown
-    target_match_re:
-      alertname: "HighCPUUsage|CriticalCPUUsage|HighMemoryUsage|CriticalMemoryUsage"
-    equal:
-      - instance
-  - source_match:
-      severity: critical
-    target_match:
-      severity: warning
-    equal:
-      - alertname
-      - instance
+      - url: 'http://middleware:8000/alert' # Шлем в твой Python код
+        send_resolved: true # Шлем и при пропадании проблемы
