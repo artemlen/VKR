@@ -6,6 +6,8 @@ services:
     build: ./spb
     container_name: server-spb
     restart: unless-stopped
+    ports:
+      - "8080:8080"
     networks:
       - bank_net
 
@@ -67,6 +69,8 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
     networks:
       - bank_net
 
@@ -76,3 +80,4 @@ networks:
 
 volumes:
   gotify_data:
+  grafana_data:
