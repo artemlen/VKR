@@ -2,7 +2,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import subprocess
 import json
 
-# Enterprise HTML/CSS/JS код
+# Enterprise HTML/CSS/JS код со слайдерами
 HTML_PAGE = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -17,7 +17,8 @@ HTML_PAGE = """
             --border: #e2e5ea;
             --text-primary: #1a1d21;
             --text-secondary: #5c6370;
-            --accent: #0f62fe; /* Корпоративный синий */
+            --accent: #0f62fe;
+            --accent-light: #d0e2ff;
             --danger: #da1e28;
             --success: #198038;
         }
@@ -38,99 +39,128 @@ HTML_PAGE = """
             max-width: 520px;
             background: var(--card-bg);
             border: 1px solid var(--border);
-            border-radius: 8px;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
             overflow: hidden;
         }
 
         .panel-header {
             border-bottom: 1px solid var(--border);
-            padding: 20px 24px;
+            padding: 24px;
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 16px;
+            background: linear-gradient(to right, #fafbfc, #f4f7f6);
         }
         .node-icon {
-            width: 40px; height: 40px;
-            background: #f2f4f8;
-            border-radius: 6px;
+            width: 44px; height: 44px;
+            background: var(--accent-light);
+            color: var(--accent);
+            border-radius: 8px;
             display: flex; align-items: center; justify-content: center;
-            font-size: 20px; color: var(--text-secondary);
+            font-size: 22px; font-weight: bold;
         }
-        .header-text h1 { font-size: 16px; font-weight: 600; }
-        .header-text p { font-size: 12px; color: var(--text-secondary); margin-top: 2px; font-family: monospace; }
+        .header-text h1 { font-size: 17px; font-weight: 600; }
+        .header-text p { font-size: 12px; color: var(--text-secondary); margin-top: 3px; font-family: monospace; }
 
-        .panel-body { padding: 24px; }
+        .panel-body { padding: 28px; }
         
         .section-title {
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 600;
             color: var(--text-secondary);
             text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 16px;
-        }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
+            letter-spacing: 0.8px;
             margin-bottom: 24px;
         }
 
-        .form-group {
+        .control-group {
+            margin-bottom: 28px;
+        }
+        .control-label {
             display: flex;
-            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
         }
-        .form-group.full-width { grid-column: span 2; }
-        
-        .form-group label {
-            font-size: 13px;
-            font-weight: 500;
-            margin-bottom: 6px;
-            color: var(--text-primary);
-        }
-        .form-group select {
-            height: 36px;
-            padding: 0 12px;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            background-color: white;
+        .control-label label {
             font-size: 14px;
+            font-weight: 500;
             color: var(--text-primary);
-            cursor: pointer;
-            outline: none;
-            transition: border-color 0.1s;
         }
-        .form-group select:focus { border-color: var(--accent); }
+        .control-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--accent);
+            background: var(--accent-light);
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+
+        /* Красивые слайдеры */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: var(--border);
+            outline: none;
+            cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: 3px solid white;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+            transition: transform 0.15s ease;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: 3px solid white;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+            cursor: pointer;
+        }
 
         .actions {
             display: flex;
             justify-content: flex-end;
             gap: 12px;
-            padding-top: 16px;
+            padding-top: 24px;
             border-top: 1px solid var(--border);
         }
 
         button {
-            height: 36px;
-            padding: 0 20px;
-            border-radius: 4px;
+            height: 40px;
+            padding: 0 24px;
+            border-radius: 6px;
             font-size: 14px;
             font-weight: 500;
             border: 1px solid transparent;
             cursor: pointer;
-            transition: all 0.1s;
+            transition: all 0.15s ease;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
         }
         .btn-primary {
             background: var(--accent);
             color: white;
+            box-shadow: 0 2px 0 #0043ce;
         }
         .btn-primary:hover { background: #0043ce; }
-        .btn-primary:disabled { background: #a8c7fa; color: white; cursor: not-allowed; }
+        .btn-primary:active { transform: translateY(1px); box-shadow: none; }
+        .btn-primary:disabled { background: #a8c7fa; color: white; cursor: not-allowed; box-shadow: none; }
         
         .btn-secondary {
             background: transparent;
@@ -141,27 +171,21 @@ HTML_PAGE = """
         .btn-secondary:disabled { color: #b0b5bd; border-color: #e2e5ea; background: transparent; cursor: not-allowed; }
 
         .console-log {
-            margin-top: 20px;
+            margin-top: 24px;
             background: #161616;
-            border-radius: 4px;
-            padding: 12px 16px;
-            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+            border-radius: 6px;
+            padding: 14px 18px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
             font-size: 12px;
             color: #f2f4f8;
-            min-height: 40px;
+            min-height: 44px;
             display: flex;
             align-items: center;
         }
         .console-log.error { color: #ff8389; }
         .console-log.success { color: #42be65; }
         .console-log.wait { color: #8d8d8d; }
-        
-        .console-prompt {
-            color: #525252;
-            margin-right: 8px;
-            user-select: none;
-        }
-
+        .console-prompt { color: #525252; margin-right: 8px; user-select: none; }
     </style>
 </head>
 <body>
@@ -176,37 +200,41 @@ HTML_PAGE = """
     </div>
     
     <div class="panel-body">
-        <div class="section-title">Параметры генерации нагрузки</div>
+        <div class="section-title">Профиль генерации нагрузки</div>
 
-        <div class="form-row">
-            <div class="form-group">
+        <div class="control-group">
+            <div class="control-label">
                 <label>Целевой CPU</label>
-                <select id="cpu">
-                    <option value="1">1 ядро (Легкая)</option>
-                    <option value="2" selected>2 ядра (Средняя)</option>
-                    <option value="4">4 ядра (Высокая)</option>
-                </select>
+                <span class="control-value" id="cpuVal">2 ядра</span>
             </div>
-            <div class="form-group">
-                <label>Целевая RAM</label>
-                <select id="memory">
-                    <option value="200M">200 МБ</option>
-                    <option value="500M" selected>500 МБ</option>
-                    <option value="1G">1.0 ГБ</option>
-                    <option value="2G">2.0 ГБ</option>
-                </select>
+            <input type="range" id="cpu" min="1" max="8" value="2" oninput="updateUI()">
+            <div style="display:flex; justify-content:space-between; font-size:10px; color:#8d8d8d; margin-top:4px;">
+                <span>1 ядро</span>
+                <span>8 ядер</span>
             </div>
         </div>
 
-        <div class="form-row">
-            <div class="form-group full-width">
+        <div class="control-group">
+            <div class="control-label">
+                <label>Целевая RAM</label>
+                <span class="control-value" id="ramVal">500 МБ</span>
+            </div>
+            <input type="range" id="memory" min="100" max="4096" step="100" value="500" oninput="updateUI()">
+            <div style="display:flex; justify-content:space-between; font-size:10px; color:#8d8d8d; margin-top:4px;">
+                <span>100 МБ</span>
+                <span>4 ГБ</span>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <div class="control-label">
                 <label>Длительность инцидента</label>
-                <select id="duration">
-                    <option value="30">30 секунд</option>
-                    <option value="60">1 минута</option>
-                    <option value="120" selected>2 минуты</option>
-                    <option value="300">5 минут</option>
-                </select>
+                <span class="control-value" id="durationVal">2 мин</span>
+            </div>
+            <input type="range" id="duration" min="10" max="300" step="10" value="120" oninput="updateUI()">
+            <div style="display:flex; justify-content:space-between; font-size:10px; color:#8d8d8d; margin-top:4px;">
+                <span>10 сек</span>
+                <span>5 мин</span>
             </div>
         </div>
 
@@ -223,6 +251,31 @@ HTML_PAGE = """
 </div>
 
 <script>
+    function updateUI() {
+        const cpu = document.getElementById('cpu').value;
+        const ram = document.getElementById('memory').value;
+        const dur = document.getElementById('duration').value;
+
+        // Форматируем текст для CPU
+        let cpuText = cpu + ' ядер';
+        if (cpu == 1) cpuText = '1 ядро';
+        else if (cpu >= 2 && cpu <= 4) cpuText = cpu + ' ядра';
+        document.getElementById('cpuVal').innerText = cpuText;
+
+        // Форматируем текст для RAM
+        let ramText = ram >= 1024 ? (ram / 1024) + ' ГБ' : ram + ' МБ';
+        document.getElementById('ramVal').innerText = ramText;
+
+        // Форматируем текст для времени
+        let durText = dur + ' сек';
+        if (dur >= 60) {
+            const m = Math.floor(dur / 60);
+            const s = dur % 60;
+            durText = s > 0 ? m + ' мин ' + s + ' сек' : m + ' мин';
+        }
+        document.getElementById('durationVal').innerText = durText;
+    }
+
     const consoleEl = document.getElementById('consoleOutput');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
@@ -238,7 +291,7 @@ HTML_PAGE = """
 
         const payload = {
             cpu: document.getElementById('cpu').value,
-            memory: document.getElementById('memory').value,
+            memory_mb: document.getElementById('memory').value, // Отправляем просто число (например, 1024)
             duration: document.getElementById('duration').value
         };
 
@@ -296,18 +349,33 @@ class StressHandler(BaseHTTPRequestHandler):
             post_data = self.rfile.read(content_length)
             params = json.loads(post_data)
 
-            cpu_cores = str(params.get('cpu', '2'))
-            mem = str(params.get('memory', '500M'))
-            duration = str(params.get('duration', '120'))
+            # 1. Получаем сырые числа со слайдеров
+            cpu_raw = params.get('cpu', '2')
+            memory_raw = int(params.get('memory_mb', 500))
+            duration_raw = str(params.get('duration', '120'))
 
-            # Защита от дурака
-            valid_cpu = ["1", "2", "4"]
-            valid_mem = ["200M", "500M", "1G", "2G"]
-            if cpu_cores not in valid_cpu: cpu_cores = "2"
-            if mem not in valid_mem: mem = "500M"
+            # 2. Валидация и форматирование CPU
             try:
-                dur_int = int(duration)
+                cpu_cores = str(max(1, min(8, int(cpu_raw))))
+            except:
+                cpu_cores = "2"
+
+            # 3. Умная конвертация RAM для stress-ng (переводим МБ в формат 500m или 1g)
+            try:
+                memory_raw = max(100, min(4096, memory_raw))
+                if memory_raw >= 1024:
+                    ram_str = f"{memory_raw // 1024}g"
+                else:
+                    ram_str = f"{memory_raw}m"
+            except:
+                ram_str = "500m"
+
+            # 4. Валидация времени
+            try:
+                dur_int = int(duration_raw)
                 if dur_int > 600: duration = "600"
+                elif dur_int < 10: duration = "10"
+                else: duration = str(dur_int)
             except:
                 duration = "120"
 
@@ -320,11 +388,11 @@ class StressHandler(BaseHTTPRequestHandler):
                 "--cpu", cpu_cores, 
                 "--io", cpu_cores, 
                 "--vm", "1", 
-                "--vm-bytes", mem, 
+                "--vm-bytes", ram_str, 
                 "--timeout", duration + "s"
             ])
 
-            self._send_json(f"Профиль применен. Генерация запущена (CPU:{cpu_cores}, RAM:{mem}, Timeout:{duration}s).")
+            self._send_json(f"Профиль применен. CPU: {cpu_cores} ядер, RAM: {ram_str}, Таймаут: {duration}с.")
             
         elif self.path == '/stop':
             subprocess.run(["pkill", "-9", "stress-ng"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
