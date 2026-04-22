@@ -4,6 +4,7 @@ import requests
 import os
 import time
 import re
+import threading
 import numpy as np
 from datetime import datetime
 
@@ -11,6 +12,8 @@ app = FastAPI(title="Bank Smart AI-Middleware")
 
 GOTIFY_URL = "http://gotify:8080/message"
 GOTIFY_TOKEN = os.getenv("GOTIFY_TOKEN")
+
+PROMETHEUS_URL = "http://prometheus:9090" # <--- НОВОЕ
 
 alert_history = {}
 maintenance_mode = False
@@ -25,7 +28,38 @@ class AlertData(BaseModel):
     labels: dict
     annotations: dict
 
-# --- API Управления ---
+# ==========================================
+# НОВОЕ: ФОНОВЫЙ ПОТОК СБОРА МЕТРИК
+# ==========================================
+def ml_background_collector():
+    """Тихо ходит в Прометеус каждые 10 сек и учит ML нормальной работе сервера"""
+    query = '100 - (avg by(instance) (rate(node_cpu_seconds_total{job="spb_server",mode="idle"}[1m])) * 100)'
+    
+    while True:
+        # Возвращаем пульс для удобства отладки
+        print("[ML BG] ❤️ Пульс: проверяю Прометеус...", flush=True)
+        
+        try:
+            resp = requests.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": query}, timeout=3)
+            data = resp.json()
+            
+            if data["status"] == "success" and data["data"]["result"]:
+                current_cpu = float(data["data"]["result"][0]["value"][1])
+                calculate_ml_metrics(current_cpu, is_background=True)
+                
+        except Exception as e:
+            print(f"[ML BG] ⚠️ Ошибка связи: {e}", flush=True)
+        
+        time.sleep(10)
+
+# Запускаем фоновый поток при старте Middleware
+@app.on_event("startup")
+def startup_event():
+    t = threading.Thread(target=ml_background_collector, daemon=True)
+    t.start()
+    print("[ML ENGINE] 🚀 Запущен фоновый поток сбора телеметрии.", flush=True)
+
+# --- API Управления (без изменений) ---
 @app.post("/api/maintenance/on")
 async def enable_maintenance():
     global maintenance_mode; maintenance_mode = True
@@ -46,12 +80,11 @@ async def enable_dedup():
     global deduplication_enabled; deduplication_enabled = True
     return {"status": "ok", "message": "Дедупликация ВКЛЮЧЕНА."}
 
-# НОВОЕ: API для сброса памяти ML (ОБЯЗАТЕЛЬНО ДЕЛАТЬ ПЕРЕД ТЕСТАМИ)
 @app.post("/api/ml/reset")
 async def reset_ml():
     cpu_history_buffer.clear()
     print("[ML ENGINE] 🧹 Буфер очищен. Модель переобучается с нуля.")
-    return {"status": "ok", "message": "Память ML сброшена. Начинаем сбор новой статистики."}
+    return {"status": "ok", "message": "Память ML сброшена."}
 
 def is_business_hours() -> bool:
     now = datetime.now()
@@ -86,14 +119,14 @@ def parse_cpu_value(text: str) -> float:
     match = re.search(r"(\d+\.\d+)", text)
     return float(match.group(1)) if match else 0.0
 
-def calculate_ml_metrics(current_cpu: float) -> dict:
+def calculate_ml_metrics(current_cpu: float, is_background: bool = False) -> dict:
     cpu_history_buffer.append(current_cpu)
     if len(cpu_history_buffer) > ML_WINDOW_SIZE:
         cpu_history_buffer.pop(0)
 
-    # Холодный старт: если данных мало, не ставим огромный интервал!
     if len(cpu_history_buffer) < 5:
-        print(f"[ML ENGINE] ⏳ Холодный старт. Собрано точек: {len(cpu_history_buffer)}/5. Используем стандартный интервал 60с.")
+        if not is_background or len(cpu_history_buffer) % 5 == 0:
+            print(f"[ML ENGINE] ⏳ {'Сбор фона' if is_background else 'Холодный старт'}. Точек: {len(cpu_history_buffer)}/5.", flush=True)
         return {"score": 0, "dynamic_interval": 60, "trend": "⏳ Инициализация", "mean": current_cpu}
 
     mean_cpu = np.mean(cpu_history_buffer)
@@ -103,18 +136,22 @@ def calculate_ml_metrics(current_cpu: float) -> dict:
     z_score = (current_cpu - mean_cpu) / std_cpu
     anomaly_score = min(100, max(0, (z_score / 3.0) * 100))
 
+    # ФИЛЬТР МИКРО-ДРЕБЕЗГА: Игнорируем аномалии, если абсолютная нагрузка ничтожна (< 5%)
+    if current_cpu < 5.0:
+        anomaly_score = 0
+
     last_val = cpu_history_buffer[-2]
     delta = abs(current_cpu - last_val)
-    
-    # Ограничиваем интервал: от 60 сек (экстренно) до 180 сек (максимум для демо, чтобы не ждать 10 минут)
     dynamic_interval = int(max(60, min(180, 600 - (delta * 30))))
 
     if current_cpu > cpu_history_buffer[-5]: trend = "📈 Резкий рост"
     elif current_cpu < cpu_history_buffer[-5]: trend = "📉 Спад"
     else: trend = "➡️ Плато"
 
-    # ВЫВОДИМ ВСЮ МАТЕМАТИКУ В ТЕРМИНАЛ!
-    print(f"[ML ENGINE] 🧠 CPU: {current_cpu}% | Норма: {mean_cpu:.1f}% | Отклонение (Z): {z_score:.1f} | Аномалия: {anomaly_score:.0f}% | Delta: {delta:.1f} | Интервал: {dynamic_interval}с | {trend}")
+    # Выводим лог ТОЛЬКО если это реальный алерт, или если фоном нашли реальную аномалию
+    if not is_background or anomaly_score > 10:
+        prefix = "[ML BG]" if is_background else "[ML ENGINE]"
+        print(f"{prefix} 🧠 CPU: {current_cpu:.1f}% | Норма: {mean_cpu:.1f}% | Z-Score: {z_score:.1f} | Аномалия: {anomaly_score:.0f}% | {trend}", flush=True)
 
     return {
         "score": round(anomaly_score, 1),
@@ -157,7 +194,8 @@ async def handle_alert(request: Request):
         if alert.status == "firing":
             if "CPU" in alert_name:
                 current_cpu = parse_cpu_value(description)
-                ml_data = calculate_ml_metrics(current_cpu)
+                # Передаем алерт в ML. is_background=False
+                ml_data = calculate_ml_metrics(current_cpu, is_background=False)
                 current_interval = ml_data["dynamic_interval"]
                 
                 ml_info_text = (f"\n\n🧠 [ML Аналитика]\n"
@@ -169,7 +207,7 @@ async def handle_alert(request: Request):
                 last_sent_time = alert_history.get(last_sent_key, 0)
                 
                 if time.time() - last_sent_time < current_interval:
-                    print(f"[MIDDLEWARE] 🔇 ML ПОДАВИЛ ПОВТОР: '{alert_name}'. Осталось молчать {int(current_interval - (time.time() - last_sent_time))}с.")
+                    print(f"[MIDDLEWARE] 🔇 ML ПОДАВИЛ ПОВТОР: '{alert_name}'. Осталось {int(current_interval - (time.time() - last_sent_time))}с.")
                     repeats_suppressed += 1; continue
                 else:
                     alert_history[last_sent_key] = time.time()
