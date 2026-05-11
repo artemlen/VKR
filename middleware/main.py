@@ -13,7 +13,7 @@ app = FastAPI(title="Bank Smart AI-Middleware")
 GOTIFY_URL = "http://gotify:8080/message"
 GOTIFY_TOKEN = os.getenv("GOTIFY_TOKEN")
 
-PROMETHEUS_URL = "http://prometheus:9090" # <--- НОВОЕ
+PROMETHEUS_URL = "http://prometheus:9090"
 
 alert_history = {}
 maintenance_mode = False
@@ -28,15 +28,13 @@ class AlertData(BaseModel):
     labels: dict
     annotations: dict
 
-# ==========================================
-# НОВОЕ: ФОНОВЫЙ ПОТОК СБОРА МЕТРИК
-# ==========================================
+
 def ml_background_collector():
     """Тихо ходит в Прометеус каждые 10 сек и учит ML нормальной работе сервера"""
     query = '100 - (avg by(instance) (rate(node_cpu_seconds_total{job="spb_server",mode="idle"}[1m])) * 100)'
     
     while True:
-        # Возвращаем пульс для удобства отладки
+        # Пульс для удобства отладки
         print("[ML BG] ❤️ Пульс: проверяю Прометеус...", flush=True)
         
         try:
@@ -59,7 +57,7 @@ def startup_event():
     t.start()
     print("[ML ENGINE] 🚀 Запущен фоновый поток сбора телеметрии.", flush=True)
 
-# --- API Управления (без изменений) ---
+# --- API Управления ---
 @app.post("/api/maintenance/on")
 async def enable_maintenance():
     global maintenance_mode; maintenance_mode = True

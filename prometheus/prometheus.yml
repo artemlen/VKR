@@ -1,6 +1,6 @@
 global:
-  scrape_interval: 5s # Чаще опрашиваем для демонстрации
-  evaluation_interval: 5s # Чаще проверяем правила
+  scrape_interval: 5s # Часто опрашиваем для демонстрации
+  evaluation_interval: 5s # Часто проверяем правила
 
 rule_files:
   - 'alert_rules.yml'

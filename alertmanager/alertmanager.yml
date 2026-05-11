@@ -11,5 +11,5 @@ route:
 receivers:
   - name: 'smart-middleware'
     webhook_configs:
-      - url: 'http://middleware:8000/alert' # Шлем в твой Python код
+      - url: 'http://middleware:8000/alert' # Шлем в Python код
         send_resolved: true # Шлем и при пропадании проблемы

@@ -36,7 +36,7 @@ services:
     networks:
       - bank_net
 
-  # 4. Твой Middleware (фильтрация шума)
+  # 4. Middleware
   middleware:
     build: ./middleware
     container_name: smart-middleware
